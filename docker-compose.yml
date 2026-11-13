@@ -1,0 +1,24 @@
+services:
+  omnivoice:
+    build: .
+    image: omnivoice-lab
+    container_name: omnivoice-lab
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      # Model weights, uploaded references and generated audio all live here,
+      # so rebuilding the image never re-downloads the model.
+      - ./data:/data
+    environment:
+      OMNIVOICE_MODEL: "${OMNIVOICE_MODEL:-k2-fsa/OmniVoice}"
+      OMNIVOICE_DEVICE: "${OMNIVOICE_DEVICE:-cuda:0}"
+      OMNIVOICE_DTYPE: "${OMNIVOICE_DTYPE:-float16}"
+      HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmniVoice Lab</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14181f; --muted: #5d6673;
+  --line: #e2e6ec; --accent: #2f6df6; --accent-ink: #ffffff;
+  --warn-bg: #fff6e5; --warn-ink: #8a5a00; --warn-line: #f0d9a8;
+  --bad-bg: #fdecec; --bad-ink: #9c2626; --bad-line: #f2c4c4;
+  --ok: #1a7f4b; --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141a; --panel: #181c24; --ink: #e8ecf2; --muted: #98a2b3;
+    --line: #272d38; --accent: #5b8cff; --accent-ink: #0b0e13;
+    --warn-bg: #2e2510; --warn-ink: #f0c66b; --warn-line: #4a3c17;
+    --bad-bg: #2f1719; --bad-ink: #ff9b9b; --bad-line: #4d2326;
+    --ok: #4ad08a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141a; --panel: #181c24; --ink: #e8ecf2; --muted: #98a2b3;
+  --line: #272d38; --accent: #5b8cff; --accent-ink: #0b0e13;
+  --warn-bg: #2e2510; --warn-ink: #f0c66b; --warn-line: #4a3c17;
+  --bad-bg: #2f1719; --bad-ink: #ff9b9b; --bad-line: #4d2326;
+  --ok: #4ad08a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; margin-bottom: 20px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+     color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+.pill { font-size: 12px; padding: 3px 9px; border-radius: 999px;
+        border: 1px solid var(--line); color: var(--muted); }
+.pill.ready { color: var(--ok); border-color: currentColor; }
+.pill.error { color: var(--bad-ink); border-color: currentColor; }
+.grid { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line);
+         border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+input, textarea, select, button {
+  font: inherit; color: inherit; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; width: 100%;
+}
+textarea { resize: vertical; min-height: 92px; }
+button { background: var(--accent); color: var(--accent-ink); border: none;
+         font-weight: 600; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.ghost { background: transparent; color: var(--muted);
+               border: 1px solid var(--line); font-weight: 500; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+.row.tight > button { flex: 0 0 auto; width: auto; padding: 6px 12px; font-size: 13px; }
+.check { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; }
+.check input { width: auto; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.tabs button { width: auto; padding: 7px 16px; background: transparent;
+               color: var(--muted); border: 1px solid transparent; font-weight: 500; }
+.tabs button[aria-selected="true"] { background: var(--panel);
+  border-color: var(--line); color: var(--ink); font-weight: 600; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.stat { font-size: 12px; font-variant-numeric: tabular-nums; padding: 3px 8px;
+        border: 1px solid var(--line); border-radius: 6px; color: var(--muted); }
+.stat b { color: var(--ink); font-weight: 600; }
+.note { border-radius: 7px; padding: 9px 11px; font-size: 13px; margin-top: 10px; }
+.note.warn { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line); }
+.note.bad { background: var(--bad-bg); color: var(--bad-ink); border: 1px solid var(--bad-line); }
+audio { width: 100%; margin-top: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px;
+     padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.flag td { background: var(--warn-bg); }
+tr.fail td { background: var(--bad-bg); }
+.scroll { max-height: 440px; overflow: auto; }
+.reflist { list-style: none; padding: 0; margin: 10px 0 0; }
+.reflist li { display: flex; gap: 8px; align-items: center; padding: 6px 0;
+              border-top: 1px solid var(--line); font-size: 13px; }
+.reflist li:first-child { border-top: none; }
+.reflist .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reflist button { width: auto; padding: 2px 8px; font-size: 12px; }
+.muted { color: var(--muted); }
+progress { width: 100%; height: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>OmniVoice Lab</h1>
+    <span class="pill" id="status">connecting…</span>
+    <span class="pill" id="gpu" hidden></span>
+    <span style="flex:1"></span>
+    <button class="ghost" style="width:auto;padding:5px 12px;font-size:13px" id="theme">theme</button>
+  </header>
+
+  <div class="grid">
+    <div>
+      <section class="panel">
+        <h2>Reference voice</h2>
+        <p class="hint">A 3–10 s clip. Keep one reference for a whole dataset — switching mid-run changes the speaker.</p>
+        <label for="refFile">Audio file</label>
+        <input type="file" id="refFile" accept="audio/*">
+        <label for="refText">Transcript <span class="muted">(optional — Whisper fills it in)</span></label>
+        <textarea id="refText" style="min-height:60px" placeholder="Exact words spoken in the clip"></textarea>
+        <div class="row tight" style="margin-top:10px">
+          <button id="refUpload">Upload</button>
+        </div>
+        <div id="refMsg"></div>
+        <ul class="reflist" id="refList"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Generation</h2>
+        <label for="numStep">Steps <span class="muted" id="numStepV">32</span></label>
+        <input type="range" id="numStep" min="8" max="64" step="4" value="32">
+        <label for="guidance">Guidance <span class="muted" id="guidanceV">2.0</span></label>
+        <input type="range" id="guidance" min="0.5" max="5" step="0.1" value="2">
+        <label for="speed">Speed <span class="muted" id="speedV">1.00</span></label>
+        <input type="range" id="speed" min="0.5" max="1.6" step="0.05" value="1">
+
+        <div class="check">
+          <input type="checkbox" id="deterministic" checked>
+          <label for="deterministic" style="margin:0">Deterministic</label>
+        </div>
+        <p class="hint">Zeroes both temperatures. There is no seed argument, so this is the only way to stop the voice drifting between clips.</p>
+
+        <div class="check">
+          <input type="checkbox" id="postprocess" checked>
+          <label for="postprocess" style="margin:0">Strip long silences</label>
+        </div>
+        <div class="check">
+          <input type="checkbox" id="normalize" checked>
+          <label for="normalize" style="margin:0">Peak-normalise to −0.1 dBFS</label>
+        </div>
+        <p class="hint">Raw output sits ~8 dB below typical recorded datasets.</p>
+      </section>
+    </div>
+
+    <div>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="single">Single</button>
+        <button role="tab" aria-selected="false" data-tab="batch">Batch</button>
+      </div>
+
+      <section class="panel" id="tab-single">
+        <h2>Text</h2>
+        <textarea id="text" placeholder="Scrivi qui il testo da sintetizzare…"></textarea>
+        <div class="row tight" style="margin-top:12px">
+          <button id="go">Generate</button>
+        </div>
+        <div id="out"></div>
+      </section>
+
+      <section class="panel" id="tab-batch" hidden>
+        <h2>Prompt list</h2>
+        <p class="hint">Either <code>{"script-0001": "testo", …}</code> or <code>[{"id": …, "text": …}, …]</code> — the same JSON the dataset builder reads.</p>
+        <label for="batchFile">Load a JSON file</label>
+        <input type="file" id="batchFile" accept=".json,application/json">
+        <label for="batchText">…or paste it</label>
+        <textarea id="batchText" style="min-height:120px" placeholder='{"script-0001": "Per esempio gli allevamenti di pescigatto…"}'></textarea>
+        <label for="limit">Limit <span class="muted">(0 = all; start small)</span></label>
+        <input type="number" id="limit" value="10" min="0">
+        <div class="row tight" style="margin-top:12px">
+          <button id="runBatch">Run</button>
+          <button class="ghost" id="dlBatch" hidden>Download .zip</button>
+        </div>
+        <div id="batchMsg"></div>
+        <div class="scroll" id="batchOut"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+$('theme').onclick = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
+  try { localStorage.setItem('theme', dark ? 'light' : 'dark'); } catch (e) {}
+};
+try {
+  const t = localStorage.getItem('theme');
+  if (t) document.documentElement.setAttribute('data-theme', t);
+} catch (e) {}
+
+for (const [id, fmt] of [['numStep', v => v], ['guidance', v => (+v).toFixed(1)], ['speed', v => (+v).toFixed(2)]]) {
+  $(id).addEventListener('input', () => { $(id + 'V').textContent = fmt($(id).value); });
+}
+
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+    $('tab-single').hidden = b.dataset.tab !== 'single';
+    $('tab-batch').hidden = b.dataset.tab !== 'batch';
+  };
+});
+
+let selectedRef = '';
+
+async function health() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    const el = $('status');
+    el.className = 'pill ' + (d.status === 'ready' ? 'ready' : d.status === 'error' ? 'error' : '');
+    el.textContent = d.status === 'loading'
+      ? `loading model… ${d.elapsed_s}s`
+      : d.status === 'error' ? 'model failed' : `${d.model} · ${d.sample_rate / 1000} kHz`;
+    if (d.status === 'error') el.title = d.error || '';
+    if (d.gpu) {
+      $('gpu').hidden = false;
+      $('gpu').textContent = `${d.gpu} · ${d.vram_free_gb}/${d.vram_total_gb} GB free`;
+    }
+    if (d.status === 'loading') setTimeout(health, 3000);
+  } catch (e) { setTimeout(health, 5000); }
+}
+
+function statRow(s) {
+  const bits = [
+    ['duration', s.duration_s != null ? s.duration_s.toFixed(2) + ' s' : '–'],
+    ['peak', s.peak_dbfs != null ? s.peak_dbfs.toFixed(1) + ' dBFS' : '–'],
+    ['speech', s.speech_rms_db != null ? s.speech_rms_db.toFixed(1) + ' dB' : '–'],
+    ['longest pause', s.longest_pause_s != null ? s.longest_pause_s.toFixed(2) + ' s' : '–'],
+  ];
+  if (s.generation_s != null) bits.push(['took', s.generation_s.toFixed(1) + ' s']);
+  if (s.rtf != null) bits.push(['RTF', s.rtf.toFixed(2)]);
+  return `<div class="stats">${bits.map(([k, v]) => `<span class="stat">${k} <b>${v}</b></span>`).join('')}</div>`;
+}
+
+function params() {
+  return {
+    reference: selectedRef,
+    num_step: +$('numStep').value,
+    guidance_scale: +$('guidance').value,
+    speed: +$('speed').value,
+    deterministic: $('deterministic').checked,
+    postprocess_output: $('postprocess').checked,
+    normalize_peak: $('normalize').checked,
+    target_dbfs: -0.1,
+  };
+}
+
+async function loadRefs() {
+  const d = await (await fetch('/api/references')).json();
+  const ul = $('refList');
+  if (!d.references.length) { ul.innerHTML = '<li class="muted">No reference yet — auto voice will be used.</li>'; return; }
+  ul.innerHTML = d.references.map(r => `
+    <li>
+      <input type="radio" name="ref" value="${esc(r.name)}" style="width:auto;flex:0 0 auto"
+             ${r.name === selectedRef ? 'checked' : ''}>
+      <span class="nm" title="${esc(r.ref_text || '')}">${esc(r.name)}
+        <span class="muted">${r.duration_s ? r.duration_s + 's' : ''}</span></span>
+      <button class="ghost" data-del="${esc(r.name)}">×</button>
+    </li>`).join('');
+  ul.querySelectorAll('input[name=ref]').forEach(i => i.onchange = () => { selectedRef = i.value; });
+  ul.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    await fetch('/api/references/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' });
+    if (selectedRef === b.dataset.del) selectedRef = '';
+    loadRefs();
+  });
+}
+
+$('refUpload').onclick = async () => {
+  const f = $('refFile').files[0];
+  if (!f) { $('refMsg').innerHTML = '<div class="note bad">Pick a file first.</div>'; return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  fd.append('ref_text', $('refText').value);
+  $('refUpload').disabled = true;
+  try {
+    const r = await fetch('/api/references', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'upload failed');
+    selectedRef = d.name;
+    const w = (d.stats.warnings || []);
+    $('refMsg').innerHTML = statRow(d.stats) +
+      (w.length ? `<div class="note warn">${w.map(esc).join('<br>')}</div>` : '');
+    await loadRefs();
+  } catch (e) {
+    $('refMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+  } finally { $('refUpload').disabled = false; }
+};
+
+$('go').onclick = async () => {
+  const text = $('text').value.trim();
+  if (!text) return;
+  $('go').disabled = true;
+  $('out').innerHTML = '<p class="hint">Generating…</p>';
+  try {
+    const r = await fetch('/api/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, ...params() }),
+    });
+    if (!r.ok) throw new Error(((await r.json()).detail) || r.statusText);
+    const s = JSON.parse(r.headers.get('X-Stats') || '{}');
+    const url = URL.createObjectURL(await r.blob());
+    const w = s.warnings || [];
+    $('out').innerHTML = `<audio controls src="${url}"></audio>${statRow(s)}` +
+      (w.length ? `<div class="note warn">${w.map(esc).join('<br>')}</div>` : '') +
+      `<p class="hint"><a href="${url}" download="omnivoice.wav">Download wav</a></p>`;
+  } catch (e) {
+    $('out').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+  } finally { $('go').disabled = false; }
+};
+
+$('batchFile').onchange = async () => {
+  const f = $('batchFile').files[0];
+  if (f) $('batchText').value = await f.text();
+};
+
+$('runBatch').onclick = async () => {
+  let items;
+  try { items = JSON.parse($('batchText').value); }
+  catch (e) { $('batchMsg').innerHTML = '<div class="note bad">Invalid JSON.</div>'; return; }
+
+  $('runBatch').disabled = true;
+  $('dlBatch').hidden = true;
+  $('batchMsg').innerHTML = '<p class="hint">Running… the page will wait until the whole run finishes.</p><progress></progress>';
+  $('batchOut').innerHTML = '';
+  try {
+    const r = await fetch('/api/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, limit: +$('limit').value, ...params() }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'batch failed');
+
+    $('batchMsg').innerHTML = `<div class="note ${d.failures ? 'bad' : d.flagged ? 'warn' : ''}">
+      ${d.count} generated · ${d.flagged} flagged · ${d.failures} failed
+      <span class="muted">— run ${esc(d.run_id)}</span></div>`;
+    $('dlBatch').hidden = false;
+    $('dlBatch').onclick = () => location.href = `/api/outputs/${encodeURIComponent(d.run_id)}/download`;
+
+    $('batchOut').innerHTML = `<table><thead><tr>
+        <th>id</th><th>dur</th><th>peak</th><th>pause</th><th>text / issue</th><th></th>
+      </tr></thead><tbody>` + d.results.map(x => `
+        <tr class="${x.error ? 'fail' : (x.warnings || []).length ? 'flag' : ''}">
+          <td class="num">${esc(x.id)}</td>
+          <td class="num">${x.duration_s != null ? x.duration_s.toFixed(2) : '–'}</td>
+          <td class="num">${x.peak_dbfs != null ? x.peak_dbfs.toFixed(1) : '–'}</td>
+          <td class="num">${x.longest_pause_s != null ? x.longest_pause_s.toFixed(2) : '–'}</td>
+          <td>${esc(x.error || (x.warnings || []).join('; ') || x.text || '')}</td>
+          <td>${x.url ? `<audio controls preload="none" src="${x.url}" style="width:170px"></audio>` : ''}</td>
+        </tr>`).join('') + '</tbody></table>';
+  } catch (e) {
+    $('batchMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+  } finally { $('runBatch').disabled = false; }
+};
+
+health();
+loadRefs();
+</script>
+</body>
+</html>
