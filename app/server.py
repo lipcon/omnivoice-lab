@@ -214,24 +214,57 @@ def generation_kwargs(p: dict[str, Any]) -> dict[str, Any]:
     return kw
 
 
+# A VoiceClonePrompt is the encoded reference. Building it once and reusing it
+# is what the maintainers recommend for keeping one voice across a run (issue
+# #44); it also drops the per-call reference encoding. Keyed by the mtimes of
+# the wav and its transcript, so correcting either rebuilds it.
+_prompt_cache: dict[str, tuple[tuple[float, float], Any]] = {}
+
+
+def clone_prompt(model: Any, ref_path: Path, ref_text: str) -> Any:
+    meta = ref_path.with_suffix(".txt")
+    key = (ref_path.stat().st_mtime, meta.stat().st_mtime if meta.exists() else 0.0)
+    hit = _prompt_cache.get(ref_path.name)
+    if hit and hit[0] == key:
+        return hit[1]
+    prompt = model.create_voice_clone_prompt(
+        ref_audio=str(ref_path), ref_text=ref_text or None
+    )
+    _prompt_cache[ref_path.name] = (key, prompt)
+    return prompt
+
+
 def synthesise(text: str, p: dict[str, Any]) -> np.ndarray:
     model = require_model()
     kw = generation_kwargs(p)
+
+    # generate() takes a language, though the parameter docs do not list it.
+    # Leaving it out makes a 646-language model infer the language as well as
+    # the speaker, which is one degree of freedom more than it needs.
+    lang = (p.get("language") or LANGUAGE).strip()
+    if lang:
+        kw["language"] = lang
+    # instruct alongside a reference: consistent with it, the maintainers say
+    # it stabilises the described attributes; conflicting, the reference wins.
+    if (p.get("instruct") or "").strip():
+        kw["instruct"] = p["instruct"].strip()
 
     ref_name = (p.get("reference") or "").strip()
     if ref_name:
         ref_path = REF_DIR / SAFE_NAME.sub("_", ref_name)
         if not ref_path.exists():
             raise HTTPException(404, f"Reference not found: {ref_name}")
-        kw["ref_audio"] = str(ref_path)
         meta = ref_path.with_suffix(".txt")
         ref_text = (p.get("ref_text") or "").strip()
         if not ref_text and meta.exists():
             ref_text = meta.read_text(encoding="utf-8").strip()
-        if ref_text:
-            kw["ref_text"] = ref_text
-    elif p.get("instruct"):
-        kw["instruct"] = p["instruct"]
+        try:
+            kw["voice_clone_prompt"] = clone_prompt(model, ref_path, ref_text)
+        except Exception:
+            # older builds without create_voice_clone_prompt
+            kw["ref_audio"] = str(ref_path)
+            if ref_text:
+                kw["ref_text"] = ref_text
 
     audio = model.generate(text=text, **kw)
     if isinstance(audio, (list, tuple)):
@@ -359,6 +392,7 @@ def set_reference_text(name: str, payload: dict[str, Any] = Body(...)) -> JSONRe
         meta.write_text(text, encoding="utf-8")
     elif meta.exists():
         meta.unlink()
+    _prompt_cache.pop(path.name, None)
     return JSONResponse({"name": path.name, "ref_text": text})
 
 
