@@ -111,7 +111,14 @@ progress { width: 100%; height: 6px; }
         <p class="hint">A 3–10 s clip. Keep one reference for a whole dataset — switching mid-run changes the speaker.</p>
         <label for="refFile">Audio file</label>
         <input type="file" id="refFile" accept="audio/*">
-        <label for="refText">Transcript <span class="muted">(optional — Whisper fills it in)</span></label>
+        <label for="refLang">Language <span class="muted">(for the transcript)</span></label>
+        <input id="refLang" list="langs" placeholder="auto-detect — set it, e.g. it">
+        <datalist id="langs">
+          <option value="it">Italian</option><option value="en">English</option>
+          <option value="es">Spanish</option><option value="fr">French</option>
+          <option value="de">German</option><option value="pt">Portuguese</option>
+        </datalist>
+        <label for="refText">Transcript <span class="muted">— type it; Whisper only guesses</span></label>
         <textarea id="refText" style="min-height:60px" placeholder="Exact words spoken in the clip"></textarea>
         <div class="row tight" style="margin-top:10px">
           <button id="refUpload">Upload</button>
@@ -279,6 +286,7 @@ $('refUpload').onclick = async () => {
   const fd = new FormData();
   fd.append('file', f);
   fd.append('ref_text', $('refText').value);
+  fd.append('language', $('refLang').value.trim());
   $('refUpload').disabled = true;
   try {
     const r = await fetch('/api/references', { method: 'POST', body: fd });
@@ -286,8 +294,22 @@ $('refUpload').onclick = async () => {
     if (!r.ok) throw new Error(d.detail || 'upload failed');
     selectedRef = d.name;
     const w = (d.stats.warnings || []);
+    if (d.transcribed) $('refText').value = d.ref_text;
     $('refMsg').innerHTML = statRow(d.stats) +
-      (w.length ? `<div class="note warn">${w.map(esc).join('<br>')}</div>` : '');
+      (w.length ? `<div class="note warn">${w.map(esc).join('<br>')}</div>` : '') +
+      (d.transcribed
+        ? `<div class="note warn">Whisper (${esc(d.language)}) wrote the transcript above.
+             Correct it if it is wrong, then <button class="ghost" id="saveRefText">save</button>.</div>`
+        : '');
+    const sv = $('saveRefText');
+    if (sv) sv.onclick = async () => {
+      await fetch('/api/references/' + encodeURIComponent(d.name) + '/text', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref_text: $('refText').value }),
+      });
+      sv.textContent = 'saved';
+      await loadRefs();
+    };
     await loadRefs();
   } catch (e) {
     $('refMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;

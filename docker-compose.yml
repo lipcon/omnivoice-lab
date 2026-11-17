@@ -13,12 +13,19 @@ services:
       OMNIVOICE_MODEL: "${OMNIVOICE_MODEL:-k2-fsa/OmniVoice}"
       OMNIVOICE_DEVICE: "${OMNIVOICE_DEVICE:-cuda:0}"
       OMNIVOICE_DTYPE: "${OMNIVOICE_DTYPE:-float16}"
+      OMNIVOICE_LANGUAGE: "${OMNIVOICE_LANGUAGE:-}"
+      OMNIVOICE_ASR_DEVICE: "${OMNIVOICE_ASR_DEVICE:-}"
       HF_ENDPOINT: "${HF_ENDPOINT:-https://huggingface.co}"
     deploy:
       resources:
         reservations:
           devices:
+            # GPU_ID picks the PHYSICAL card, as nvidia-smi numbers it.
+            # Only that one is passed in, so inside the container it is always
+            # cuda:0 -- which is why OMNIVOICE_DEVICE stays cuda:0 even when
+            # GPU_ID is 5. Set GPU_ID=all to expose every card, and only then
+            # does OMNIVOICE_DEVICE=cuda:5 mean anything.
             - driver: nvidia
-              count: 1
+              device_ids: ["${GPU_ID:-0}"]
               capabilities: [gpu]
     restart: unless-stopped

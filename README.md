@@ -80,13 +80,42 @@ curl -s -X POST localhost:8000/api/generate \
 
 Set in `.env` or the environment:
 
-| variable | default |
-|---|---|
-| `PORT` | `8000` |
-| `OMNIVOICE_MODEL` | `k2-fsa/OmniVoice` |
-| `OMNIVOICE_DEVICE` | `cuda:0` |
-| `OMNIVOICE_DTYPE` | `float16` |
-| `HF_ENDPOINT` | `https://huggingface.co` |
+| variable | default | |
+|---|---|---|
+| `PORT` | `8000` | |
+| `GPU_ID` | `0` | which physical card to pass in, as `nvidia-smi` numbers it |
+| `OMNIVOICE_MODEL` | `k2-fsa/OmniVoice` | |
+| `OMNIVOICE_DEVICE` | `cuda:0` | see below |
+| `OMNIVOICE_DTYPE` | `float16` | |
+| `OMNIVOICE_LANGUAGE` | *(auto)* | language of the reference clips |
+| `OMNIVOICE_ASR_DEVICE` | *(model device)* | e.g. `cpu`, to keep the GPU free |
+| `HF_ENDPOINT` | `https://huggingface.co` | |
+
+### Picking a GPU
+
+`GPU_ID` selects the card, not `OMNIVOICE_DEVICE`. Only the selected card is
+passed into the container, so inside it the card is always `cuda:0` — setting
+`OMNIVOICE_DEVICE=cuda:5` fails there with no such device. To run on the sixth
+card:
+
+```
+GPU_ID=5
+OMNIVOICE_DEVICE=cuda:0
+```
+
+`GPU_ID=all` exposes every card, and only then does `OMNIVOICE_DEVICE=cuda:5`
+address one.
+
+### The reference transcript
+
+Type it. A reference uploaded without one is transcribed by Whisper, and the
+text it produces is what the model aligns the voice against — wrong text, worse
+clone, nothing in the logs. `OMNIVOICE_LANGUAGE` at least stops auto-detection
+guessing the language of a short clip.
+
+The transcript is saved next to the clip the first time, so Whisper runs once
+per reference. Without that cache OmniVoice re-transcribes inside every
+`generate()` call: the same five-second file, once per clip, for a whole run.
 
 ## Licence
 

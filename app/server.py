@@ -39,6 +39,15 @@ MODEL_ID = os.environ.get("OMNIVOICE_MODEL", "k2-fsa/OmniVoice")
 DEVICE = os.environ.get("OMNIVOICE_DEVICE", "cuda:0")
 DTYPE = os.environ.get("OMNIVOICE_DTYPE", "float16")
 
+# Whisper transcribes a reference clip that was uploaded without its text.
+# Left empty it auto-detects, which on a short or atypical clip can pick the
+# wrong language and hand the model a nonsense ref_text -- with nothing in the
+# logs to say so. Setting it is the cheapest way to remove that failure mode.
+LANGUAGE = os.environ.get("OMNIVOICE_LANGUAGE", "").strip()
+# The ASR model can sit on a different GPU, or on the CPU, to keep the
+# generation device free. Empty means "same device as the model".
+ASR_DEVICE = os.environ.get("OMNIVOICE_ASR_DEVICE", "").strip()
+
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 app = FastAPI(title="OmniVoice Lab")
@@ -57,7 +66,10 @@ def _load_model() -> None:
         from omnivoice import OmniVoice
 
         dtype = getattr(torch, DTYPE)
-        model = OmniVoice.from_pretrained(MODEL_ID, device_map=DEVICE, dtype=dtype)
+        kwargs: dict[str, Any] = {"device_map": DEVICE, "dtype": dtype}
+        if ASR_DEVICE:
+            kwargs["asr_device"] = ASR_DEVICE
+        model = OmniVoice.from_pretrained(MODEL_ID, **kwargs)
         with _lock:
             _model = model
         _state["status"] = "ready"
@@ -71,6 +83,23 @@ def _startup() -> None:
     for d in (REF_DIR, OUT_DIR):
         d.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=_load_model, daemon=True).start()
+
+
+def transcribe_reference(model: Any, path: Path, language: str = "") -> str:
+    """Transcribe a reference clip once, with an explicit language if given.
+
+    OmniVoice.transcribe() takes no language argument, so the HF pipeline is
+    driven directly to pass one. If that private attribute ever goes away the
+    public method still works, just with auto-detection.
+    """
+    lang = (language or LANGUAGE).strip()
+    if getattr(model, "_asr_pipe", None) is None:
+        model.load_asr_model()
+    pipe = getattr(model, "_asr_pipe", None)
+    if pipe is not None and lang:
+        out = pipe(str(path), generate_kwargs={"language": lang, "task": "transcribe"})
+        return (out["text"] or "").strip()
+    return model.transcribe(str(path))
 
 
 def require_model() -> Any:
@@ -225,6 +254,9 @@ def health() -> JSONResponse:
         "device": DEVICE,
         "dtype": DTYPE,
         "sample_rate": SAMPLE_RATE,
+        "language": LANGUAGE or "auto",
+        "asr_device": ASR_DEVICE or DEVICE,
+        "asr_error": _state.get("asr_error"),
         "elapsed_s": round(time.time() - _state["started"], 1),
     }
     try:
@@ -262,7 +294,9 @@ def list_references() -> JSONResponse:
 
 @app.post("/api/references")
 async def upload_reference(
-    file: UploadFile = File(...), ref_text: str = Form("")
+    file: UploadFile = File(...),
+    ref_text: str = Form(""),
+    language: str = Form(""),
 ) -> JSONResponse:
     name = SAFE_NAME.sub("_", Path(file.filename or "reference").stem) + ".wav"
     raw = await file.read()
@@ -277,12 +311,55 @@ async def upload_reference(
     if ref_text.strip():
         dest.with_suffix(".txt").write_text(ref_text.strip(), encoding="utf-8")
 
+    # Without a cached transcript, OmniVoice re-runs Whisper on this same clip
+    # inside every single generate() call (models/omnivoice.py: "if ref_text is
+    # None"). Transcribing once here and saving it turns 561 transcriptions of
+    # one five-second file into one, and lets the text be corrected by hand.
+    transcribed = False
+    if not ref_text.strip():
+        try:
+            auto = transcribe_reference(require_model(), dest, language)
+        except HTTPException:
+            auto = ""  # model still loading; generate() will transcribe instead
+        except Exception as exc:
+            auto = ""
+            _state["asr_error"] = f"{type(exc).__name__}: {exc}"
+        if auto:
+            dest.with_suffix(".txt").write_text(auto, encoding="utf-8")
+            ref_text, transcribed = auto, True
+
     stats = analyse(audio, sr)
     if not 3.0 <= stats["duration_s"] <= 10.0:
         stats["warnings"].append(
             f"{stats['duration_s']:.1f}s reference; the model is tuned for 3-10s"
         )
-    return JSONResponse({"name": name, "sample_rate": sr, "stats": stats})
+    if transcribed:
+        stats["warnings"].append(
+            "Transcript written by Whisper -- check it before generating a set"
+        )
+    return JSONResponse({
+        "name": name,
+        "sample_rate": sr,
+        "stats": stats,
+        "ref_text": ref_text.strip(),
+        "transcribed": transcribed,
+        "language": (language or LANGUAGE) or "auto",
+    })
+
+
+@app.put("/api/references/{name}/text")
+def set_reference_text(name: str, payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """Correct a transcript -- in particular one Whisper got wrong."""
+    path = REF_DIR / SAFE_NAME.sub("_", name)
+    if not path.exists():
+        raise HTTPException(404, f"Reference not found: {name}")
+    text = (payload.get("ref_text") or "").strip()
+    meta = path.with_suffix(".txt")
+    if text:
+        meta.write_text(text, encoding="utf-8")
+    elif meta.exists():
+        meta.unlink()
+    return JSONResponse({"name": path.name, "ref_text": text})
 
 
 @app.delete("/api/references/{name}")
