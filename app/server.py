@@ -466,14 +466,8 @@ def list_runs() -> JSONResponse:
     return JSONResponse({"runs": runs})
 
 
-@app.get("/api/outputs/{run_id}/{name}")
-def get_output(run_id: str, name: str) -> FileResponse:
-    path = OUT_DIR / SAFE_NAME.sub("_", run_id) / SAFE_NAME.sub("_", name)
-    if not path.exists():
-        raise HTTPException(404, "not found")
-    return FileResponse(str(path), media_type="audio/wav")
-
-
+# Declared BEFORE /{name}: routes match in declaration order, so the
+# catch-all would swallow "download" as a filename and 404.
 @app.get("/api/outputs/{run_id}/download")
 def download_run(run_id: str) -> Response:
     run_dir = OUT_DIR / SAFE_NAME.sub("_", run_id)
@@ -489,6 +483,14 @@ def download_run(run_id: str) -> Response:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{run_dir.name}.zip"'},
     )
+
+
+@app.get("/api/outputs/{run_id}/{name}")
+def get_output(run_id: str, name: str) -> FileResponse:
+    path = OUT_DIR / SAFE_NAME.sub("_", run_id) / SAFE_NAME.sub("_", name)
+    if not path.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(str(path), media_type="audio/wav")
 
 
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
