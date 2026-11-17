@@ -58,6 +58,16 @@ corpus. Since NeMo's FastPitch and HiFi-GAN preprocessors both use
 mismatch shows up as a constant offset across every bin. Normalising to
 −0.1 dBFS matches the convention used by the recorded datasets.
 
+**Redoing one clip.** A batch run is rarely uniformly good: one line in fifty
+comes out with the wrong timbre or an odd pause. The ↻ beside a row generates
+that row again, with the generation settings as they stand, so a single line can
+be redone slower or with more guidance than the run it belongs to. It re-rolls
+with the temperatures on — a deterministic retry would hand back the identical
+clip — and the wav keeps its name, so the run's zip always carries the latest
+take. The take it replaces goes to `_history/` inside the run, which the zip
+leaves out. A run can be reopened later from the dropdown without generating
+anything again.
+
 ## API
 
 | | |
@@ -67,6 +77,9 @@ mismatch shows up as a constant offset across every bin. Normalising to
 | `DELETE /api/references/{name}` | remove one |
 | `POST /api/generate` | one clip; wav body, measurements in the `X-Stats` header |
 | `POST /api/batch` | a whole prompt list; writes a run directory |
+| `GET /api/outputs` | the runs on disk |
+| `GET /api/outputs/{run}/manifest` | reopen a finished run |
+| `POST /api/outputs/{run}/{id}/regenerate` | redo one clip of it, in place |
 | `GET /api/outputs/{run}/download` | the run as a zip |
 
 ```bash

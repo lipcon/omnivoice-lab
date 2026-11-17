@@ -83,6 +83,12 @@ td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top
 td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 tr.flag td { background: var(--warn-bg); }
 tr.fail td { background: var(--bad-bg); }
+td.play { white-space: nowrap; }
+td.play audio { vertical-align: middle; margin-top: 0; }
+td.play button { width: auto; padding: 3px 9px; font-size: 13px;
+                 margin-left: 6px; vertical-align: middle; }
+select { font: inherit; color: inherit; background: var(--bg);
+         border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; width: 100%; }
 .scroll { max-height: 440px; overflow: auto; }
 .reflist { list-style: none; padding: 0; margin: 10px 0 0; }
 .reflist li { display: flex; gap: 8px; align-items: center; padding: 6px 0;
@@ -187,6 +193,16 @@ progress { width: 100%; height: 6px; }
           <button id="runBatch">Run</button>
           <button class="ghost" id="dlBatch" hidden>Download .zip</button>
         </div>
+        <div class="row tight" style="margin-top:8px">
+          <select id="runPick"><option value="">— reopen a previous run —</option></select>
+          <button class="ghost" id="runLoad">Open</button>
+        </div>
+        <p class="hint">↻ on a row generates that one clip again, with the
+           temperatures on so the take actually differs — the knobs on the left
+           apply as they stand, so a line can be redone slower or with more
+           guidance than the rest of the run. The wav keeps its name, so the
+           .zip always holds the latest take; the one it replaces is kept in
+           <code>_history/</code>, which the zip leaves out.</p>
         <div id="batchMsg"></div>
         <div class="scroll" id="batchOut"></div>
       </section>
@@ -345,6 +361,86 @@ $('go').onclick = async () => {
   } finally { $('go').disabled = false; }
 };
 
+let batchRun = '';
+
+function rowClass(x) { return x.error ? 'fail' : (x.warnings || []).length ? 'flag' : ''; }
+
+function rowHTML(x) {
+  const n = (v, d) => v != null ? v.toFixed(d) : '–';
+  // the player is cache-busted: after a retry the url is unchanged, and the
+  // browser would otherwise hand back the take that was just replaced
+  return `<td class="num">${esc(x.id)}${x.take > 1 ? ` <span class="muted">·${x.take}</span>` : ''}</td>
+    <td class="num">${n(x.duration_s, 2)}</td>
+    <td class="num">${n(x.peak_dbfs, 1)}</td>
+    <td class="num">${n(x.longest_pause_s, 2)}</td>
+    <td>${esc(x.error || (x.warnings || []).join('; ') || x.text || '')}</td>
+    <td class="play">${x.url ? `<audio controls preload="none" src="${x.url}?t=${Date.now()}" style="width:170px"></audio>` : ''}<button class="ghost" title="Generate this one again">↻</button></td>`;
+}
+
+function bindRow(tr, x) {
+  const b = tr.querySelector('.play button');
+  if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true; b.textContent = '…';
+    try {
+      const r = await fetch(`/api/outputs/${encodeURIComponent(batchRun)}/${encodeURIComponent(x.id)}/regenerate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // temperatures back on: a deterministic retry returns the identical clip
+        body: JSON.stringify({ ...params(), deterministic: false }),
+      });
+      let d = {};
+      try { d = await r.json(); } catch (e) {}
+      if (!r.ok) throw new Error(d.detail || r.statusText);
+      tr.className = rowClass(d);
+      tr.innerHTML = rowHTML(d);
+      bindRow(tr, d);
+    } catch (e) {
+      b.disabled = false; b.textContent = '↻';
+      $('batchMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+    }
+  };
+}
+
+function renderResults(d) {
+  batchRun = d.run_id;
+  $('batchMsg').innerHTML = `<div class="note ${d.failures ? 'bad' : d.flagged ? 'warn' : ''}">
+    ${d.count} clips · ${d.flagged} flagged · ${d.failures} failed
+    <span class="muted">— run ${esc(d.run_id)}</span></div>`;
+  $('dlBatch').hidden = false;
+  $('dlBatch').onclick = () => location.href = `/api/outputs/${encodeURIComponent(d.run_id)}/download`;
+  $('batchOut').innerHTML = `<table><thead><tr>
+      <th>id</th><th>dur</th><th>peak</th><th>pause</th><th>text / issue</th><th></th>
+    </tr></thead><tbody>` +
+    d.results.map(x => `<tr class="${rowClass(x)}">${rowHTML(x)}</tr>`).join('') +
+    '</tbody></table>';
+  const rows = $('batchOut').querySelectorAll('tbody tr');
+  d.results.forEach((x, i) => bindRow(rows[i], x));
+}
+
+async function loadRuns() {
+  try {
+    const d = await (await fetch('/api/outputs')).json();
+    const keep = $('runPick').value;
+    $('runPick').innerHTML = '<option value="">— reopen a previous run —</option>' +
+      d.runs.map(r => `<option value="${esc(r.run_id)}">${esc(r.run_id)} · ${r.count} wav</option>`).join('');
+    if (keep) $('runPick').value = keep;
+  } catch (e) {}
+}
+
+$('runLoad').onclick = async () => {
+  const id = $('runPick').value;
+  if (!id) return;
+  try {
+    const r = await fetch(`/api/outputs/${encodeURIComponent(id)}/manifest`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'could not open that run');
+    if (!d.results.length) throw new Error('that run has no manifest — nothing to reopen');
+    renderResults(d);
+  } catch (e) {
+    $('batchMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
+  }
+};
+
 $('batchFile').onchange = async () => {
   const f = $('batchFile').files[0];
   if (f) $('batchText').value = await f.text();
@@ -367,23 +463,8 @@ $('runBatch').onclick = async () => {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'batch failed');
 
-    $('batchMsg').innerHTML = `<div class="note ${d.failures ? 'bad' : d.flagged ? 'warn' : ''}">
-      ${d.count} generated · ${d.flagged} flagged · ${d.failures} failed
-      <span class="muted">— run ${esc(d.run_id)}</span></div>`;
-    $('dlBatch').hidden = false;
-    $('dlBatch').onclick = () => location.href = `/api/outputs/${encodeURIComponent(d.run_id)}/download`;
-
-    $('batchOut').innerHTML = `<table><thead><tr>
-        <th>id</th><th>dur</th><th>peak</th><th>pause</th><th>text / issue</th><th></th>
-      </tr></thead><tbody>` + d.results.map(x => `
-        <tr class="${x.error ? 'fail' : (x.warnings || []).length ? 'flag' : ''}">
-          <td class="num">${esc(x.id)}</td>
-          <td class="num">${x.duration_s != null ? x.duration_s.toFixed(2) : '–'}</td>
-          <td class="num">${x.peak_dbfs != null ? x.peak_dbfs.toFixed(1) : '–'}</td>
-          <td class="num">${x.longest_pause_s != null ? x.longest_pause_s.toFixed(2) : '–'}</td>
-          <td>${esc(x.error || (x.warnings || []).join('; ') || x.text || '')}</td>
-          <td>${x.url ? `<audio controls preload="none" src="${x.url}" style="width:170px"></audio>` : ''}</td>
-        </tr>`).join('') + '</tbody></table>';
+    renderResults(d);
+    loadRuns();
   } catch (e) {
     $('batchMsg').innerHTML = `<div class="note bad">${esc(e.message)}</div>`;
   } finally { $('runBatch').disabled = false; }
@@ -391,6 +472,7 @@ $('runBatch').onclick = async () => {
 
 health();
 loadRefs();
+loadRuns();
 </script>
 </body>
 </html>

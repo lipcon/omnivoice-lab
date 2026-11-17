@@ -276,6 +276,31 @@ def synthesise(text: str, p: dict[str, Any]) -> np.ndarray:
     return x
 
 
+# ------------------------------------------------------------------ manifest
+
+# A run's manifest is rewritten whenever one of its clips is regenerated, so
+# reads and writes are serialised: two retries fired at once would each write
+# back the list they read, and the slower one would undo the other.
+_manifest_lock = threading.Lock()
+
+
+def read_manifest(run_dir: Path) -> list[dict[str, Any]]:
+    path = run_dir / "manifest.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def write_manifest(run_dir: Path, results: list[dict[str, Any]]) -> None:
+    (run_dir / "manifest.json").write_text(
+        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 # ----------------------------------------------------------------- endpoints
 
 @app.get("/api/health")
@@ -472,7 +497,8 @@ def batch(payload: dict[str, Any] = Body(...)) -> JSONResponse:
             stats["generation_s"] = round(elapsed, 2)
             results.append({
                 "id": key, "text": item["text"], "file": path.name,
-                "url": f"/api/outputs/{run_dir.name}/{path.name}", **stats,
+                "url": f"/api/outputs/{run_dir.name}/{path.name}",
+                "take": 1, **stats,
             })
         except Exception as exc:
             failures += 1
@@ -481,9 +507,8 @@ def batch(payload: dict[str, Any] = Body(...)) -> JSONResponse:
                 "error": f"{type(exc).__name__}: {exc}", "warnings": ["failed"],
             })
 
-    (run_dir / "manifest.json").write_text(
-        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    with _manifest_lock:
+        write_manifest(run_dir, results)
     flagged = sum(1 for r in results if r.get("warnings"))
     return JSONResponse({
         "run_id": run_dir.name, "count": len(results),
@@ -517,6 +542,91 @@ def download_run(run_id: str) -> Response:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{run_dir.name}.zip"'},
     )
+
+
+@app.get("/api/outputs/{run_id}/manifest")
+def get_manifest(run_id: str) -> JSONResponse:
+    """Reopen a finished run without generating anything again."""
+    run_dir = OUT_DIR / SAFE_NAME.sub("_", run_id)
+    if not run_dir.is_dir():
+        raise HTTPException(404, "run not found")
+    results = read_manifest(run_dir)
+    return JSONResponse({
+        "run_id": run_dir.name,
+        "count": len(results),
+        "failures": sum(1 for r in results if r.get("error")),
+        "flagged": sum(1 for r in results if r.get("warnings")),
+        "results": results,
+    })
+
+
+@app.post("/api/outputs/{run_id}/{item_id}/regenerate")
+def regenerate(
+    run_id: str, item_id: str, payload: dict[str, Any] = Body(default={})
+) -> JSONResponse:
+    """Redo one clip of a finished run, in place.
+
+    The wav keeps its name, so the run's zip always carries the latest take.
+    The take it replaces is moved into `_history/`, which the zip skips because
+    it writes files and not directories: with the temperatures on no two takes
+    are alike, so a retry that comes out worse would otherwise be unrecoverable.
+
+    The text comes from the manifest unless the payload overrides it, and the
+    rest of the payload is an ordinary generation request -- the same knobs as
+    a batch run, so one clip can be redone slower, or with more guidance, than
+    the run it belongs to.
+    """
+    run_dir = OUT_DIR / SAFE_NAME.sub("_", run_id)
+    if not run_dir.is_dir():
+        raise HTTPException(404, "run not found")
+    key = SAFE_NAME.sub("_", item_id)
+
+    with _manifest_lock:
+        entry = next((r for r in read_manifest(run_dir) if r.get("id") == key), None)
+
+    text = (payload.get("text") or (entry or {}).get("text") or "").strip()
+    if not text:
+        raise HTTPException(404, f"No text recorded for '{key}' in this run")
+
+    started = time.time()
+    try:
+        audio = synthesise(text, payload)
+    except HTTPException:
+        raise
+    except Exception as exc:  # reaches the page as a message, not a bare 500
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+    elapsed = time.time() - started
+
+    # written only once the new take exists, so a failed retry leaves the
+    # previous wav exactly where it was
+    path = run_dir / f"{key}.wav"
+    # takes count the attempts that produced a file, so retrying an item that
+    # failed during the batch -- or one being added now -- gives take 1.
+    take = int((entry or {}).get("take") or 0)
+    if path.exists():
+        take = max(take, 1)
+        hist = run_dir / "_history"
+        hist.mkdir(exist_ok=True)
+        path.replace(hist / f"{key}.take{take}.wav")
+    sf.write(str(path), audio, SAMPLE_RATE, subtype="PCM_16")
+
+    stats = analyse(audio)
+    stats["generation_s"] = round(elapsed, 2)
+    item = {
+        "id": key, "text": text, "file": path.name,
+        "url": f"/api/outputs/{run_dir.name}/{path.name}",
+        "take": take + 1, **stats,
+    }
+    with _manifest_lock:
+        results = read_manifest(run_dir)
+        for i, r in enumerate(results):
+            if r.get("id") == key:
+                results[i] = item
+                break
+        else:
+            results.append(item)
+        write_manifest(run_dir, results)
+    return JSONResponse(item)
 
 
 @app.get("/api/outputs/{run_id}/{name}")
