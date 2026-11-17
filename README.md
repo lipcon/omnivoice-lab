@@ -90,5 +90,6 @@ Set in `.env` or the environment:
 
 ## Licence
 
-This wrapper is MIT. OmniVoice itself is Apache-2.0; its model weights carry
-their own terms. Cloning a real person's voice needs that person's consent.
+Apache-2.0, the same licence as [OmniVoice](https://github.com/k2-fsa/OmniVoice)
+itself, so there is no friction in using both. The model weights carry their
+own terms. Cloning a real person's voice needs that person's consent.
